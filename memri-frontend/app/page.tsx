@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Search, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Sparkles, ChevronLeft, ChevronRight, Star } from "lucide-react";
 import { InputBar, Model } from "./input-bar";
 import { Timeline, type CaptureNode } from "./timeline";
 import { type Capture, type ChatMessage, ClipReference, parseClipReferences, type ClipData } from "./components";
@@ -48,6 +48,22 @@ export default function Home() {
     if (MEMRI_API_KEY) base["x-api-key"] = MEMRI_API_KEY;
     return base;
   }, []);
+
+  // Simple bold renderer: turns **text** into <strong>text</strong>
+  const renderRichText = (text: string) => {
+    const parts = text.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, idx) => {
+      const isBold = part.startsWith("**") && part.endsWith("**") && part.length > 4;
+      if (isBold) {
+        return (
+          <strong key={`b-${idx}`} className="font-semibold">
+            {part.slice(2, -2)}
+          </strong>
+        );
+      }
+      return <span key={`t-${idx}`}>{part}</span>;
+    });
+  };
 
   // Fetch images for specific capture IDs (with caching)
   const fetchImages = useCallback(async (captureIds: number[]) => {
@@ -456,6 +472,13 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <a
+              href="/workflows"
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-xs font-medium text-[var(--color-text)] transition-all hover:border-[var(--color-primary)] hover:bg-[var(--color-hover)]"
+            >
+              <Star className="h-3.5 w-3.5 text-red-500" />
+              Workflows
+            </a>
             <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
               <div className={`h-2 w-2 rounded-full ${connected ? 'bg-[var(--color-success)]' : 'bg-[var(--color-warning)]'}`} />
               <span>{connected ? 'Connected' : 'Offline'}</span>
@@ -651,7 +674,11 @@ export default function Home() {
                       <div className="whitespace-pre-wrap">
                         {segments.map((segment, segIdx) => {
                           if (segment.type === "text") {
-                            return <span key={segIdx}>{segment.content}</span>;
+                            return (
+                              <span key={segIdx} className="whitespace-pre-wrap">
+                                {renderRichText(segment.content)}
+                              </span>
+                            );
                           } else {
                             return (
                               <ClipReference

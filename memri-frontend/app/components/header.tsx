@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Sparkles } from "lucide-react";
+import { Search, Sparkles, Star } from "lucide-react";
 
 type HeaderProps = {
   search: string;
@@ -40,16 +40,25 @@ export function Header({ search, onSearchChange, connected }: HeaderProps) {
         </div>
       </div>
 
-      {/* Right section: Status */}
-      <div className="flex items-center gap-2">
-        <div
-          className={`h-1.5 w-1.5 rounded-full ${
-            connected ? "bg-[var(--color-success)]" : "bg-[var(--color-warning)]"
-          }`}
-        />
-        <span className="text-[11px] font-medium text-[var(--color-text-tertiary)]">
-          {connected ? "Live" : "Offline"}
-        </span>
+      {/* Right section: Workflows link + Status */}
+      <div className="flex items-center gap-3">
+        <a
+          href="/workflows"
+          className="inline-flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-1.5 text-[11px] font-medium text-[var(--color-text)] transition-all hover:border-[var(--color-primary)] hover:bg-[var(--color-hover)]"
+        >
+          <Star className="h-3.5 w-3.5 text-red-500" />
+          Workflows
+        </a>
+        <div className="flex items-center gap-2">
+          <div
+            className={`h-1.5 w-1.5 rounded-full ${
+              connected ? "bg-[var(--color-success)]" : "bg-[var(--color-warning)]"
+            }`}
+          />
+          <span className="text-[11px] font-medium text-[var(--color-text-tertiary)]">
+            {connected ? "Live" : "Offline"}
+          </span>
+        </div>
       </div>
     </header>
   );
