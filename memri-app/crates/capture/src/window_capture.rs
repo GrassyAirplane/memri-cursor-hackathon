@@ -49,9 +49,9 @@ impl WindowFilters {
             return true;
         }
 
-        self.include_set.iter().any(|include| {
-            app_name_lower.contains(include) || title_lower.contains(include)
-        })
+        self.include_set
+            .iter()
+            .any(|include| app_name_lower.contains(include) || title_lower.contains(include))
     }
 }
 

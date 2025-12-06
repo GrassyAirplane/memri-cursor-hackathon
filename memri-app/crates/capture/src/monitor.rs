@@ -54,16 +54,10 @@ impl SafeMonitor {
                 return Err(anyhow!("monitor {monitor_id} has invalid dimensions"));
             }
 
-            let buffer = monitor
-                .capture_image()
-                .map_err(anyhow::Error::from)?;
+            let buffer = monitor.capture_image().map_err(anyhow::Error::from)?;
 
-            let rgba = ImageBuffer::<Rgba<u8>, _>::from_raw(
-                width,
-                height,
-                buffer.into_raw(),
-            )
-            .ok_or_else(|| anyhow!("failed to convert monitor buffer"))?;
+            let rgba = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, buffer.into_raw())
+                .ok_or_else(|| anyhow!("failed to convert monitor buffer"))?;
 
             Ok(DynamicImage::ImageRgba8(rgba))
         })

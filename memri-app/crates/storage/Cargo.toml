@@ -10,3 +10,4 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1"
 memri_config = { path = "../config" }
+serde = { version = "1", features = ["derive"] }

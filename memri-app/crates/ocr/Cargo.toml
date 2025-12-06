@@ -7,3 +7,11 @@ edition = "2021"
 anyhow = "1.0"
 async-trait = "0.1"
 tracing = "0.1"
+windows = { version = "0.58", features = [
+    "Globalization",
+    "Media_Ocr",
+    "Graphics_Imaging",
+    "Storage_Streams",
+    "Foundation",
+    "implement",
+] }

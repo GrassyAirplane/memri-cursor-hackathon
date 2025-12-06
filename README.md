@@ -2,7 +2,22 @@
 
 This document captures the work required to bring near feature parity with Screenpipe inside the `memri-app` backend while delivering a polished chat and vision UI in the `memri-frontend` Next.js application. Each task includes a checkbox to track completion. The initial implementation targets Windows devices, leveraging Windows-native OCR and window focus APIs.
 
-> Working note: after each code change, attempt to compile or run relevant tests (e.g., `cargo check`, `cargo test`, `npm test`) to keep the scaffold healthy. Store LLM credentials in `memri-frontend/.env.local` using the template key from `tutorials/fake-memri/webapp/.env.local` (see `GPT_KEY`).
+> Working note: after each code change, attempt to compile or run relevant tests (e.g., `cargo check`, `cargo test`, `npm test`) to keep the scaffold healthy. Store LLM credentials in `memri-frontend/.env.local` using the template key from `tutorials/fake-memri/webapp/.env.local` (see `GPT_KEY`). Use the `screenpipe` repo as inspiration/reference for capture/OCR/API behavior.
+> Use Anthropic (Claude) as the primary LLM adapter (`ANTHROPIC_API_KEY`) for assistant/chat endpoints.
+
+### Environment Variables (backend)
+
+Define these in `memri-app/.env`:
+
+- `MEMRI_MONITOR_ID` (u32) — target monitor id
+- `MEMRI_CAPTURE_INTERVAL_MS` / `MEMRI_CAPTURE_MAX_INTERVAL_MS` — base/maximum capture interval with backoff
+- `MEMRI_CAPTURE_UNFOCUSED` — capture non-focused windows (bool)
+- `MEMRI_LANGUAGES` — comma-separated OCR languages (e.g., `en`)
+- `MEMRI_DATABASE_URL` — sqlite connection string (e.g., `sqlite://memri.db`)
+- `MEMRI_WINDOW_INCLUDE` / `MEMRI_WINDOW_IGNORE` — filters for app/window titles
+- `MEMRI_API_ADDR` — bind address for HTTP API (default `127.0.0.1:8080`)
+- `MEMRI_API_KEY` — optional API key; if set, clients must send `x-api-key`
+- `ANTHROPIC_API_KEY` — required for `/assistant` Claude calls
 
 ## High-Level Goals
 
@@ -34,34 +49,34 @@ This document captures the work required to bring near feature parity with Scree
 
 ### 3. Capture & Change Detection
 
-- [ ] Port/implement monitor and window capture logic with multi-monitor and filter support.
-- [ ] Implement frame-diff logic (histogram + SSIM) to detect meaningful screen changes.
-- [ ] Introduce throttling/backoff to balance fidelity vs resource usage.
+- [x] Port/implement monitor and window capture logic with multi-monitor and filter support.
+- [x] Implement frame-diff logic (histogram + SSIM) to detect meaningful screen changes.
+- [x] Introduce throttling/backoff to balance fidelity vs resource usage.
 
 ### 4. OCR Pipeline
 
-- [ ] Integrate OCR engines (Tesseract default, optional cloud/custom) behind a unified trait.
-- [ ] Handle per-window OCR execution with confidence metrics and structured JSON output.
-- [ ] Add browser URL enrichment using focused-window heuristics.
+- [x] Integrate OCR engines (microsoft ocr) behind a unified trait.
+- [x] Handle per-window OCR execution with confidence metrics and structured JSON output.
+- [x] Add browser URL enrichment using focused-window heuristics.
 
 ### 5. Data Storage (SQLite)
 
-- [ ] Design schema (captures, windows, texts, chat messages, metadata, indices).
-- [ ] Implement migration tooling (e.g., `sqlx::migrate!` or Diesel migrations).
-- [ ] Write persistence layer for capture batches and chat history.
-- [ ] Add pruning/compaction strategy for local storage size control.
+- [x] Design schema (captures, windows, texts, chat messages, metadata, indices).
+- [x] Implement migration tooling (e.g., `sqlx::migrate!` or Diesel migrations).
+- [x] Write persistence layer for capture batches and chat history.
+- [x] Add pruning/compaction strategy for local storage size control.
 
 ### 6. API & Realtime Interfaces
 
-- [ ] Design REST/GraphQL endpoints for historical queries (captures, OCR text, conversations).
-- [ ] Implement WebSocket/SSE channel for live capture and chat updates.
-- [ ] Secure endpoints (auth placeholders, rate limiting, CORS policy for Next.js).
+- [x] Design REST/GraphQL endpoints for historical queries (captures, OCR text, conversations).
+- [x] Implement WebSocket/SSE channel for live capture and chat updates.
+- [x] Secure endpoints (auth placeholders, rate limiting, CORS policy for Next.js).
 
 ### 7. Chat & Assistant Integration
 
-- [ ] Define conversation model linking OCR context with assistant prompts/responses.
-- [ ] Implement backend chat orchestration (LLM adapters, context retrieval from SQLite).
-- [ ] Provide streaming responses to frontend with incremental tokens.
+- [x] Define conversation model linking OCR context with assistant prompts/responses.
+- [x] Implement backend chat orchestration (LLM adapters, context retrieval from SQLite).
+- [x] Provide streaming responses to frontend with incremental tokens.
 
 ### 8. Frontend Foundations (`memri-frontend`)
 
@@ -89,7 +104,7 @@ This document captures the work required to bring near feature parity with Scree
 
 ### 12. Quality, Observability & Tooling
 
-- [ ] Add logging/tracing across backend pipeline (capture latencies, OCR duration, send failures).
+- [x] Add logging/tracing across backend pipeline (capture latencies, OCR duration, send failures).
 - [ ] Implement unit/integration tests for critical flows (capture diffing, OCR parsing, API contracts).
 - [ ] Provide developer scripts for local startup (backend, frontend, database seeding).
 

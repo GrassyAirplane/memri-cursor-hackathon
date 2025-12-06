@@ -22,7 +22,13 @@ pub async fn capture_frame(
     let monitor = get_monitor_by_id(monitor_id).await?;
     let monitor_image = monitor.capture_image().await?;
 
-    let windows = match capture_all_visible_windows(&monitor, window_filters, capture_unfocused_windows).await {
+    let windows = match capture_all_visible_windows(
+        &monitor,
+        window_filters,
+        capture_unfocused_windows,
+    )
+    .await
+    {
         Ok(captured) => captured,
         Err(err) => {
             warn!(monitor_id, "failed to capture window set: {err}");

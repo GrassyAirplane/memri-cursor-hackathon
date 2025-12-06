@@ -12,3 +12,12 @@ memri_config = { path = "../../crates/config" }
 memri_capture = { path = "../../crates/capture" }
 memri_ocr = { path = "../../crates/ocr" }
 memri_storage = { path = "../../crates/storage" }
+axum = { version = "0.7", features = ["macros", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower = "0.4"
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait = "0.1"
+futures-util = "0.3"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tower-http = { version = "0.6", features = ["cors"] }

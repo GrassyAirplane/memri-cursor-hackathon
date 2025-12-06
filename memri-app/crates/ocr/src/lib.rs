@@ -1,9 +1,10 @@
 //! OCR abstraction layer powered by Windows-native APIs first.
 //!
-//! Implementations will wrap native Windows OCR, Tesseract, or cloud engines.
+//! The Windows implementation uses `Windows.Media.Ocr` to perform on-device OCR.
 
 use anyhow::Result;
 use async_trait::async_trait;
+use tracing::debug;
 
 /// OCR text output including optional structured details.
 #[derive(Debug, Clone)]
@@ -35,16 +36,90 @@ pub struct WindowsOcr;
 
 #[async_trait]
 impl OcrEngine for WindowsOcr {
-    async fn recognize(&self, _image_bytes: &[u8], context: &OcrContext) -> Result<OcrPayload> {
-        // Real implementation will bridge to Windows.Media.Ocr.
-        Ok(OcrPayload {
-            text: format!("[stub ocr for {}]", context.window_name),
-            confidence: None,
-            json: None,
-        })
+    async fn recognize(&self, image_bytes: &[u8], context: &OcrContext) -> Result<OcrPayload> {
+        #[cfg(target_os = "windows")]
+        {
+            let (text, json) = ocr_windows(image_bytes, context).await?;
+            Ok(OcrPayload {
+                text,
+                confidence: None,
+                json: Some(json),
+            })
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(OcrPayload {
+                text: format!("[stub ocr for {}]", context.window_name),
+                confidence: None,
+                json: None,
+            })
+        }
     }
 
     fn name(&self) -> &'static str {
         "windows-ocr"
     }
+}
+
+#[cfg(target_os = "windows")]
+async fn ocr_windows(image_bytes: &[u8], context: &OcrContext) -> Result<(String, String)> {
+    use anyhow::Context as _;
+    use windows::{
+        core::HSTRING,
+        Globalization::Language,
+        Graphics::Imaging::{BitmapDecoder, BitmapPixelFormat, SoftwareBitmap},
+        Media::Ocr::OcrEngine,
+        Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
+    };
+
+    // Write bytes into an in-memory stream for the decoder.
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::new()?;
+    writer.WriteBytes(image_bytes)?;
+    writer.StoreAsync()?.GetResults()?;
+    let buffer = writer.DetachBuffer()?;
+    stream.WriteAsync(&buffer)?.GetResults()?;
+    stream.Seek(0)?;
+
+    let decoder = BitmapDecoder::CreateAsync(&stream)?.GetResults()?;
+    let bitmap = decoder.GetSoftwareBitmapAsync()?.GetResults()?;
+    // Ensure format is supported by OCR (BGRA8).
+    let bitmap = SoftwareBitmap::Convert(&bitmap, BitmapPixelFormat::Bgra8)?;
+
+    let engine = if let Some(lang) = context
+        .languages
+        .iter()
+        .find_map(|l| Language::CreateLanguage(&HSTRING::from(l)).ok())
+    {
+        OcrEngine::TryCreateFromLanguage(&lang)?
+    } else {
+        OcrEngine::TryCreateFromUserProfileLanguages()?
+    };
+
+    let result = engine
+        .RecognizeAsync(&bitmap)?
+        .GetResults()
+        .context("Windows OCR recognize failed")?;
+
+    let text = result.Text()?.to_string_lossy();
+    let json = format!(
+        r#"{{"engine":"{}","window":"{}","app":"{}","lang":"{}"}}"#,
+        "windows.media.ocr",
+        context.window_name,
+        context.app_name,
+        engine
+            .RecognizerLanguage()?
+            .LanguageTag()?
+            .to_string_lossy()
+    );
+
+    debug!(
+        window = %context.window_name,
+        app = %context.app_name,
+        lang = %engine.RecognizerLanguage()?.LanguageTag()?.to_string_lossy(),
+        "windows ocr completed"
+    );
+
+    Ok((text, json))
 }
