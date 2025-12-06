@@ -564,9 +564,9 @@ async fn stream_assistant(
     let stream = resp.bytes_stream().filter_map(move |item| {
         let text_ref = accumulated_clone.clone();
         async move {
-            match item {
-                Ok(bytes) => {
-                    let chunk = String::from_utf8_lossy(&bytes).to_string();
+        match item {
+            Ok(bytes) => {
+                let chunk = String::from_utf8_lossy(&bytes).to_string();
                     
                     // Parse SSE format: extract text from content_block_delta events
                     let mut extracted_text = String::new();
@@ -592,10 +592,10 @@ async fn stream_assistant(
                     } else {
                         None
                     }
-                }
-                Err(err) => {
-                    error!("anthropic stream error: {err}");
-                    None
+            }
+            Err(err) => {
+                error!("anthropic stream error: {err}");
+                None
                 }
             }
         }
