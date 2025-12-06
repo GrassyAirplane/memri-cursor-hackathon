@@ -1,0 +1,12 @@
+[package]
+name = "memri_capture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+memri_ocr = { path = "../ocr" }
+memri_storage = { path = "../storage" }
+memri_config = { path = "../config" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tracing = "0.1"
