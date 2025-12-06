@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use tracing::warn;
 use image::{DynamicImage, ImageBuffer, Rgba};
 use std::sync::Arc;
 use tokio::task;

@@ -3,47 +3,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, Sparkles, ChevronLeft, ChevronRight } from "lucide-react";
 import { InputBar, Model } from "./input-bar";
+import { Timeline, type CaptureNode } from "./timeline";
+import { type Capture, type ChatMessage, ClipReference, parseClipReferences, type ClipData } from "./components";
 import { MEMRI_API_KEY, MEMRI_API_URL } from "./constants";
 
-type CaptureWindow = {
-  window_name: string;
-  app_name: string;
-  text: string;
-  confidence?: number | null;
-  browser_url?: string | null;
-  image_base64?: string | null;
-};
-
-type Capture = {
-  capture_id: number;
-  frame_number: number;
-  timestamp_ms: number;
-  windows: CaptureWindow[];
-};
-
-type ChatMessage = {
-  id: number;
-  role: string;
-  content: string;
-  created_at_ms: number;
-};
+// Initial welcome messages from the assistant (use fixed timestamp to avoid hydration mismatch)
+const getWelcomeMessages = (): ChatMessage[] => [
+  {
+    id: -1,
+    role: "assistant",
+    content: "👋 Hey there! I'm your personal memory assistant. I've been watching your screen and can help you recall anything you've seen or done.",
+    created_at_ms: 0, // Will be hidden in UI for welcome messages
+  },
+  {
+    id: -2,
+    role: "assistant", 
+    content: "Here's what I can help with:\n\n• 🎬 \"What YouTube videos did I watch today?\"\n• 💻 \"When was I last in VS Code?\"\n• 💬 \"Find my Slack messages from this morning\"\n• 🔍 \"What was I researching yesterday?\"\n\nJust ask naturally and I'll find the relevant moments!",
+    created_at_ms: 0, // Will be hidden in UI for welcome messages
+  },
+];
 
 export default function Home() {
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [selectedCapture, setSelectedCapture] = useState<Capture | null>(null);
-  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chat, setChat] = useState<ChatMessage[]>(getWelcomeMessages);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(true);
   const [model, setModel] = useState<Model>({
-    id: "claude-3-5-sonnet",
-    name: "Claude 3.5 Sonnet",
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
     description: "Most capable model",
   });
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const [chatWidth, setChatWidth] = useState(420);
   const [isDragging, setIsDragging] = useState(false);
+  const [imageCache, setImageCache] = useState<Record<number, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<number>>(new Set());
+  const pendingFetchesRef = useRef<Set<number>>(new Set());
 
   const headers = useMemo(() => {
     const base: Record<string, string> = { "Content-Type": "application/json" };
@@ -51,8 +49,56 @@ export default function Home() {
     return base;
   }, []);
 
+  // Fetch images for specific capture IDs (with caching)
+  const fetchImages = useCallback(async (captureIds: number[]) => {
+    // Filter out IDs that are already being fetched
+    const toFetch = captureIds.filter((id) => !pendingFetchesRef.current.has(id));
+    if (toFetch.length === 0) return;
+    
+    // Mark as pending
+    toFetch.forEach((id) => pendingFetchesRef.current.add(id));
+    
+    // Mark as loading in state
+    setLoadingImages((prev) => {
+      const next = new Set(prev);
+      toFetch.forEach((id) => next.add(id));
+      return next;
+    });
+
+    try {
+      const res = await fetch(
+        `${MEMRI_API_URL}/captures/images?ids=${toFetch.join(",")}`,
+        { headers }
+      );
+      if (!res.ok) {
+        console.error("Failed to fetch images:", res.status);
+        return;
+      }
+      const data = (await res.json()) as Record<string, string>;
+      
+      // Update cache
+      setImageCache((prev) => {
+        const updated = { ...prev };
+        for (const [id, base64] of Object.entries(data)) {
+          updated[parseInt(id, 10)] = base64;
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Error fetching images:", err);
+    } finally {
+      // Remove from pending and loading
+      toFetch.forEach((id) => pendingFetchesRef.current.delete(id));
+      setLoadingImages((prev) => {
+        const next = new Set(prev);
+        toFetch.forEach((id) => next.delete(id));
+        return next;
+      });
+    }
+  }, [headers]);
+
   const fetchCaptures = useCallback(async () => {
-    const res = await fetch(`${MEMRI_API_URL}/captures?limit=50`, { headers });
+    const res = await fetch(`${MEMRI_API_URL}/captures`, { headers });
     if (!res.ok) return;
     const data = (await res.json()) as Capture[];
     const sorted = [...data].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
@@ -67,12 +113,60 @@ export default function Home() {
     }
   }, [headers, selectedCapture]);
 
+  // Track when we last finished streaming to prevent immediate overwrites
+  const lastStreamEndRef = useRef<number>(0);
+  
   const fetchChat = useCallback(async () => {
+    // Don't fetch while streaming - it could overwrite the local message
+    if (streaming) return;
+    
+    // Don't fetch for 5 seconds after streaming ends to let backend save
+    const timeSinceStreamEnd = Date.now() - lastStreamEndRef.current;
+    if (lastStreamEndRef.current > 0 && timeSinceStreamEnd < 5000) {
+      return;
+    }
+    
     const res = await fetch(`${MEMRI_API_URL}/chat?limit=50`, { headers });
     if (!res.ok) return;
     const data = (await res.json()) as ChatMessage[];
-    setChat(data.reverse());
-  }, [headers]);
+    
+    // Prepend welcome messages if no real messages exist
+    if (data.length === 0) {
+      setChat(getWelcomeMessages());
+    } else {
+      setChat((prevChat) => {
+        // DB returns newest first, so reverse to get oldest first (chronological order)
+        const dbMessages = [...data].reverse();
+        
+        // Check if we have local messages (negative ID) that might not be in DB yet
+        const localMessages = prevChat.filter(m => m.id < 0 && m.created_at_ms > 0);
+        
+        if (localMessages.length > 0) {
+          // Find the most recent assistant message in local state
+          const localAssistant = localMessages.find(m => m.role === 'assistant');
+          
+          if (localAssistant) {
+            // Check if DB has this message (compare by content length)
+            const lastDbAssistant = dbMessages.filter(m => m.role === 'assistant').pop();
+            
+            // If local has more content, keep it instead of DB version
+            if (!lastDbAssistant || localAssistant.content.length > lastDbAssistant.content.length) {
+              // Remove the incomplete DB version if it exists, add local version
+              const filtered = dbMessages.filter(m => 
+                !(m.role === 'assistant' && lastDbAssistant && m.id === lastDbAssistant.id)
+              );
+              const merged = [...filtered, localAssistant];
+              // Sort by created_at_ms to maintain chronological order
+              return merged.sort((a, b) => a.created_at_ms - b.created_at_ms);
+            }
+          }
+        }
+        
+        // Return DB messages sorted chronologically (oldest first)
+        return dbMessages.sort((a, b) => a.created_at_ms - b.created_at_ms);
+      });
+    }
+  }, [headers, streaming]);
 
   const fetchData = useCallback(async () => {
     await Promise.all([fetchCaptures(), fetchChat()]);
@@ -161,26 +255,73 @@ export default function Home() {
     const decoder = new TextDecoder();
     let assistantText = "";
 
+    let sseBuffer = ""; // Buffer for handling partial SSE lines
+    
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      assistantText += decoder.decode(value, { stream: true });
-      setChat((prev) => {
-        const base = prev.filter((m) => m.id !== -9999);
-        return [
-          ...base,
-          {
-            id: -9999,
-            role: "assistant",
-            content: assistantText,
-            created_at_ms: Date.now(),
-          },
-        ];
-      });
+      
+      // Parse SSE format - extract data after "data: " prefix
+      const rawChunk = decoder.decode(value, { stream: true });
+      sseBuffer += rawChunk;
+      
+      // Process complete lines only
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop() || ""; // Keep incomplete last line in buffer
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const textData = line.slice(6); // Remove "data: " prefix
+          if (textData && textData !== '[DONE]') {
+            assistantText += textData;
+          }
+        }
+      }
+      
+      if (assistantText) {
+        setChat((prev) => {
+          const base = prev.filter((m) => m.id !== -9999);
+          return [
+            ...base,
+            {
+              id: -9999,
+              role: "assistant",
+              content: assistantText,
+              created_at_ms: Date.now(),
+            },
+          ];
+        });
+      }
     }
+    
+    // Process any remaining buffer
+    if (sseBuffer.startsWith('data: ')) {
+      const textData = sseBuffer.slice(6);
+      if (textData && textData !== '[DONE]') {
+        assistantText += textData;
+      }
+    }
+    
+    // Final update with complete message
+    const finalContent = assistantText;
+    setChat((prev) => {
+      const base = prev.filter((m) => m.id !== -9999);
+      return [
+        ...base,
+        {
+          id: -Date.now(), // Use negative timestamp as temp ID (will be replaced on next fetch)
+          role: "assistant",
+          content: finalContent,
+          created_at_ms: Date.now(),
+        },
+      ];
+    });
 
     setStreaming(false);
-    await fetchChat();
+    lastStreamEndRef.current = Date.now(); // Prevent fetchChat from overwriting for 3 seconds
+    
+    // Don't fetch immediately - just let the message stay as-is
+    // The periodic refresh (if any) will sync later
   }
 
   const filteredCaptures = useMemo(() => {
@@ -197,8 +338,7 @@ export default function Home() {
 
   const timeline = useMemo(() => {
     const source = filteredCaptures.length ? filteredCaptures : captures;
-    const ordered = [...source].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
-    return ordered.slice(Math.max(ordered.length - 50, 0));
+    return [...source].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
   }, [captures, filteredCaptures]);
 
   useEffect(() => {
@@ -213,6 +353,21 @@ export default function Home() {
     return timeline.findIndex((c) => c.capture_id === selectedCapture?.capture_id);
   }, [timeline, selectedCapture]);
 
+  // Fetch images for selected capture and ±4 surrounding captures
+  useEffect(() => {
+    if (selectedIndex < 0 || timeline.length === 0) return;
+    
+    const start = Math.max(0, selectedIndex - 4);
+    const end = Math.min(timeline.length - 1, selectedIndex + 4);
+    const idsToFetch: number[] = [];
+    
+    for (let i = start; i <= end; i++) {
+      idsToFetch.push(timeline[i].capture_id);
+    }
+    
+    fetchImages(idsToFetch);
+  }, [selectedIndex, timeline, fetchImages]);
+
   const goPrev = () => {
     if (selectedIndex > 0) {
       setSelectedCapture(timeline[selectedIndex - 1]);
@@ -226,9 +381,55 @@ export default function Home() {
   };
 
   const selectedWindow = selectedCapture?.windows?.[0];
+  
+  // Get the cached image for the selected capture
+  const selectedImage = selectedCapture 
+    ? imageCache[selectedCapture.capture_id] 
+    : null;
+  const isImageLoading = selectedCapture 
+    ? loadingImages.has(selectedCapture.capture_id) 
+    : false;
 
   const handleSend = async (text: string, selectedModel: Model) => {
     await sendToAssistant(text, selectedModel.id);
+  };
+
+  // Navigate to a specific capture from a clip reference
+  const handleClipClick = (clip: ClipData) => {
+    const capture = captures.find((c) => c.capture_id === clip.capture_id);
+    if (capture) {
+      setSelectedCapture(capture);
+    } else {
+      // Try to find by timestamp if capture_id doesn't match
+      const byTimestamp = captures.find((c) => c.timestamp_ms === clip.timestamp_ms);
+      if (byTimestamp) {
+        setSelectedCapture(byTimestamp);
+      }
+    }
+  };
+
+  // Convert captures to timeline format
+  const timelineNodes: CaptureNode[] = useMemo(() => {
+    return timeline.map((cap) => ({
+      id: `${cap.capture_id}`,
+      capture_id: cap.capture_id,
+      frame_number: cap.frame_number,
+      timestamp_ms: cap.timestamp_ms,
+      thumbnailUrl: cap.windows?.[0]?.image_base64
+        ? `data:image/png;base64,${cap.windows[0].image_base64}`
+        : undefined,
+      metadata: {
+        applicationName: cap.windows?.[0]?.app_name,
+        windowTitle: cap.windows?.[0]?.window_name,
+      },
+    }));
+  }, [timeline]);
+
+  const handleTimelineSelect = (node: CaptureNode) => {
+    const capture = timeline.find((c) => c.capture_id === node.capture_id);
+    if (capture) {
+      setSelectedCapture(capture);
+    }
   };
 
   return (
@@ -249,7 +450,7 @@ export default function Home() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search captures..."
+                placeholder="Search captures... (e.g YouTube)"
                 className="h-9 w-64 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg)] pl-9 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-tertiary)] transition-fast focus:border-[var(--color-primary)] focus:outline-none"
               />
             </div>
@@ -263,109 +464,108 @@ export default function Home() {
         </div>
 
         {/* Preview area */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="relative flex-1 bg-[var(--color-bg-elevated)]">
-            {selectedWindow?.image_base64 ? (
+        <div className="flex flex-1 flex-col" style={{ minHeight: 0 }}>
+          {/* Info bar - static, pushes content down */}
+          {selectedWindow && (
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-[var(--color-primary)]" />
+                  <span className="text-sm font-medium text-[var(--color-text)]">
+                    {selectedWindow.app_name || 'Unknown App'}
+                  </span>
+                </div>
+                <div className="h-4 w-px bg-[var(--color-border)]" />
+                <span className="max-w-[400px] truncate text-sm text-[var(--color-text-secondary)]">
+                  {selectedWindow.window_name || 'Untitled'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--color-text-tertiary)]">
+                  {selectedCapture ? new Date(selectedCapture.timestamp_ms).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  }) : ''}
+                </span>
+                <div className="h-4 w-px bg-[var(--color-border)]" />
+                <span className="text-xs text-[var(--color-text-tertiary)]">
+                  {selectedIndex + 1} / {timeline.length}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Image container */}
+          <div 
+            className="relative flex flex-1 items-center justify-center overflow-hidden bg-[var(--color-bg-elevated)] p-6"
+          >
+            {isImageLoading ? (
+              <div className="flex flex-col items-center justify-center gap-3">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
+                <span className="text-sm text-[var(--color-text-tertiary)]">Loading capture...</span>
+              </div>
+            ) : selectedImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`data:image/png;base64,${selectedWindow.image_base64}`}
-                alt={selectedWindow.window_name}
-                className="h-full w-full object-contain"
+                src={`data:image/png;base64,${selectedImage}`}
+                alt={selectedWindow?.window_name || "Screen capture"}
+                className="rounded-[var(--radius-sm)] object-contain"
+                style={{
+                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.1)',
+                  maxHeight: '100%',
+                  maxWidth: '100%',
+                }}
               />
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-[var(--color-text-tertiary)]">
+              <div className="flex h-full w-full items-center justify-center text-sm text-[var(--color-text-tertiary)]">
                 No capture selected
               </div>
             )}
 
-            {/* Preview overlay info - Eden.so subtle card */}
-            {selectedWindow && (
-              <div 
-                className="absolute left-4 top-4 flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-card-bg)]/95 px-3 py-2 backdrop-blur-sm"
-                style={{
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                }}
-              >
-                <div className="text-sm font-medium text-[var(--color-text)]">
-                  {selectedWindow.window_name || 'Untitled'}
-                </div>
-                <div className="h-4 w-px bg-[var(--color-border)]" />
-                <div className="text-xs text-[var(--color-text-secondary)]">
-                  {selectedCapture ? new Date(selectedCapture.timestamp_ms).toLocaleTimeString() : ''}
-                </div>
-              </div>
-            )}
-
-            {/* Navigation buttons - Eden.so style */}
+            {/* Navigation buttons */}
             {selectedCapture && (
               <>
                 <button
                   onClick={goPrev}
                   disabled={selectedIndex <= 0}
-                  className="button-press absolute left-4 top-1/2 -translate-y-1/2 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-card-bg)]/95 p-2 backdrop-blur-sm transition-fast hover:bg-[var(--color-hover)] disabled:opacity-30"
+                  className="button-press absolute left-4 top-1/2 -translate-y-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-card-bg)] p-2.5 transition-all hover:border-[var(--color-primary)] hover:bg-[var(--color-hover)] disabled:opacity-30"
                   style={{
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                   }}
                 >
-                  <ChevronLeft className="h-5 w-5" />
+                  <ChevronLeft className="h-4 w-4" />
                 </button>
                 <button
                   onClick={goNext}
                   disabled={selectedIndex === timeline.length - 1}
-                  className="button-press absolute right-4 top-1/2 -translate-y-1/2 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-card-bg)]/95 p-2 backdrop-blur-sm transition-fast hover:bg-[var(--color-hover)] disabled:opacity-30"
+                  className="button-press absolute right-4 top-1/2 -translate-y-1/2 rounded-full border border-[var(--color-border)] bg-[var(--color-card-bg)] p-2.5 transition-all hover:border-[var(--color-primary)] hover:bg-[var(--color-hover)] disabled:opacity-30"
                   style={{
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                   }}
                 >
-                  <ChevronRight className="h-5 w-5" />
+                  <ChevronRight className="h-4 w-4" />
                 </button>
               </>
             )}
-
-            {/* OCR text overlay */}
-            {selectedWindow?.text && (
-              <div 
-                className="absolute bottom-4 left-4 right-4 max-h-32 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-card-bg)]/95 p-3 backdrop-blur-sm"
-                style={{
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                }}
-              >
-                <div className="text-xs text-[var(--color-text-secondary)] whitespace-pre-wrap leading-relaxed">
-                  {selectedWindow.text}
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Timeline scrubber */}
-          <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-6 py-4">
-            <div className="mb-2 flex items-center justify-between text-xs text-[var(--color-text-secondary)]">
-              <span>{timeline.length} captures</span>
-              <span>
-                {selectedCapture
-                  ? `#${selectedIndex + 1} of ${timeline.length}`
-                  : 'None selected'}
-              </span>
+          {/* OCR text panel - static at bottom of preview */}
+          {selectedWindow?.text && (
+            <div className="max-h-20 flex-shrink-0 overflow-y-auto border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2">
+              <p className="font-mono text-[11px] leading-relaxed text-[var(--color-text-secondary)]">
+                {selectedWindow.text}
+              </p>
             </div>
-            <div className="flex gap-1 overflow-x-auto pb-2 smooth-scroll">
-              {timeline.map((capture) => {
-                const isActive = capture.capture_id === selectedCapture?.capture_id;
-                return (
-                  <button
-                    key={capture.capture_id}
-                    onClick={() => setSelectedCapture(capture)}
-                    className={`group relative h-12 w-1.5 flex-shrink-0 rounded-sm transition-all ${
-                      isActive
-                        ? 'bg-[var(--color-primary)] scale-y-125'
-                        : 'bg-[var(--color-border)] hover:bg-[var(--color-text-tertiary)] hover:scale-y-110'
-                    }`}
-                    title={`#${capture.frame_number} - ${new Date(capture.timestamp_ms).toLocaleString()}`}
-                  >
-                    <span className="sr-only">Frame {capture.frame_number}</span>
-                  </button>
-                );
-              })}
-            </div>
+          )}
+
+          {/* Timeline scrubber - at absolute bottom */}
+          <div className="flex-shrink-0 border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+            <Timeline
+              captures={timelineNodes}
+              selectedId={selectedCapture ? `${selectedCapture.capture_id}` : null}
+              onSelect={handleTimelineSelect}
+            />
           </div>
         </div>
       </div>
@@ -400,7 +600,7 @@ export default function Home() {
         </div>
 
         {/* Chat messages - Eden.so bubble style */}
-        <div className="flex-1 overflow-y-auto px-[var(--space-md)] py-[var(--space-lg)] smooth-scroll">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-[var(--space-md)] py-[var(--space-lg)] smooth-scroll">
           <div className="flex flex-col gap-[var(--space-md)]">
             {chat.map((m, idx) => {
               const isUser = m.role !== 'assistant';
@@ -408,14 +608,31 @@ export default function Home() {
               const isSameSender = prevMessage && prevMessage.role === m.role;
               const marginTop = isSameSender ? 'var(--space-xs)' : 'var(--space-md)';
               
+              // Build captures lookup for clip reference parsing
+              const capturesLookup = new Map(
+                captures.map((c) => [
+                  c.capture_id,
+                  {
+                    timestamp_ms: c.timestamp_ms,
+                    app_name: c.windows?.[0]?.app_name,
+                    window_name: c.windows?.[0]?.window_name,
+                  },
+                ])
+              );
+              
+              // Parse clip references from assistant messages
+              const { segments } = isUser 
+                ? { segments: [{ type: "text" as const, content: m.content }] } 
+                : parseClipReferences(m.content, capturesLookup);
+              
               return (
                 <div
                   key={`${m.id}-${m.created_at_ms}`}
                   className={`message-enter flex ${isUser ? 'justify-end' : 'justify-start'}`}
                   style={{ marginTop: idx === 0 ? '0' : marginTop }}
                 >
-                  <div className={`flex max-w-[70%] flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-                    {/* Eden.so Message Bubble */}
+                  <div className={`flex max-w-[85%] flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+                    {/* Message Bubble */}
                     <div
                       className={`rounded-[var(--radius-lg)] px-4 py-3 text-sm leading-relaxed ${
                         isUser
@@ -430,22 +647,39 @@ export default function Home() {
                           : 'var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px',
                       }}
                     >
-                      <div className="whitespace-pre-wrap">{m.content}</div>
+                      {/* Render message with inline clip references */}
+                      <div className="whitespace-pre-wrap">
+                        {segments.map((segment, segIdx) => {
+                          if (segment.type === "text") {
+                            return <span key={segIdx}>{segment.content}</span>;
+                          } else {
+                            return (
+                              <ClipReference
+                                key={`clip-${segment.clip.capture_id}-${segIdx}`}
+                                clip={segment.clip}
+                                onClick={() => handleClipClick(segment.clip)}
+                              />
+                            );
+                          }
+                        })}
+                      </div>
                     </div>
-                    {/* Eden.so Timestamp */}
-                    <div 
-                      className={`mt-1 flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-tertiary)] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
-                      style={{ letterSpacing: '0em' }}
-                    >
-                      <span>{new Date(m.created_at_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
+                    {/* Timestamp - hide for welcome messages (created_at_ms === 0) */}
+                    {m.created_at_ms > 0 && (
+                      <div 
+                        className={`mt-1 flex items-center gap-1 text-[11px] font-medium text-[var(--color-text-tertiary)] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
+                        style={{ letterSpacing: '0em' }}
+                      >
+                        <span>{new Date(m.created_at_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })}
             <div ref={chatEndRef} />
           </div>
-        </div>
+                </div>
 
         {/* Input bar - Eden.so style */}
         <InputBar
@@ -455,7 +689,7 @@ export default function Home() {
           onSend={handleSend}
           disabled={loading || streaming}
         />
-      </div>
+            </div>
     </div>
   );
 }

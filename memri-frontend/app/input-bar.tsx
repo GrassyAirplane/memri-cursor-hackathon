@@ -53,15 +53,15 @@ export function InputBar({
       models ??
       [
         {
-          id: "claude-3-5-sonnet",
-          name: "Claude 3.5 Sonnet",
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
           description: "Most capable model",
           icon: <Sparkles className="h-4 w-4 text-[var(--color-secondary)]" />,
         },
         {
-          id: "gpt-4-turbo",
-          name: "GPT-4 Turbo",
-          description: "Fast and capable",
+          id: "claude-opus-4-20250514",
+          name: "Claude Opus 4",
+          description: "Powerful reasoning",
           icon: <Wand2 className="h-4 w-4 text-[var(--color-primary)]" />,
         },
       ],

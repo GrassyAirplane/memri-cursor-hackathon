@@ -21,3 +21,4 @@ async-trait = "0.1"
 futures-util = "0.3"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tower-http = { version = "0.6", features = ["cors"] }
+chrono = { version = "0.4", features = ["serde"] }

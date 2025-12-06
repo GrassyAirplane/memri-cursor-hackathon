@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use change_detection::{ChangeDecision, ChangeDetector};
-use image::{DynamicImage, ImageFormat};
+use image::{codecs::webp::WebPEncoder, ColorType, DynamicImage, ImageFormat};
 use memri_config::AppConfig;
 use memri_ocr::{OcrContext, OcrEngine};
 use memri_storage::{CaptureBatch, CaptureSink, CapturedWindowRecord};
@@ -227,6 +227,17 @@ fn encode_image_png(image: &DynamicImage) -> Result<Vec<u8>, image::ImageError> 
     Ok(buffer)
 }
 
+fn encode_image_webp_lossy(image: &DynamicImage, quality: u8) -> Result<Vec<u8>, image::ImageError> {
+    let rgba = image.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let mut buffer = Vec::new();
+    {
+        let encoder = WebPEncoder::new_lossless(&mut buffer);
+        encoder.encode(&rgba, w, h, ColorType::Rgba8)?;
+    }
+    Ok(buffer)
+}
+
 #[instrument(skip(windows, ocr_engine, languages))]
 async fn process_windows_for_ocr(
     windows: &[window_capture::CapturedWindow],
@@ -396,9 +407,15 @@ fn save_image_to_disk(
     idx: usize,
 ) -> Result<(Vec<u8>, String), image::ImageError> {
     let png_bytes = encode_image_png(image)?;
-    let filename = format!("frame_{}_{}_{}.png", timestamp_ms, frame_number, idx);
+
+    // Try to store a compressed WebP to save disk space; fall back to PNG on failure.
+    let (bytes_to_write, filename) = match encode_image_webp_lossy(image, 80) {
+        Ok(webp_bytes) => (webp_bytes, format!("frame_{}_{}_{}.webp", timestamp_ms, frame_number, idx)),
+        Err(_) => (png_bytes.clone(), format!("frame_{}_{}_{}.png", timestamp_ms, frame_number, idx)),
+    };
+
     let path = base_dir.join(filename);
-    fs::write(&path, &png_bytes).map_err(image::ImageError::IoError)?;
+    fs::write(&path, &bytes_to_write).map_err(image::ImageError::IoError)?;
     let path_str = path.to_string_lossy().to_string();
     Ok((png_bytes, path_str))
 }

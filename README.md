@@ -1,6 +1,6 @@
 # Memri Cursor Hackathon Plan
 
-This document captures the work required to bring near feature parity with Screenpipe inside the `memri-app` backend while delivering a polished chat and vision UI in the `memri-frontend` Next.js application. Each task includes a checkbox to track completion. The initial implementation targets Windows devices, leveraging Windows-native OCR and window focus APIs.
+inside the `memri-app` backend while delivering a polished chat and vision UI in the `memri-frontend` Next.js application. Each task includes a checkbox to track completion. The initial implementation targets Windows devices, leveraging Windows-native OCR and window focus APIs.
 
 > Working note: after each code change, attempt to compile or run relevant tests (e.g., `cargo check`, `cargo test`, `npm test`) to keep the scaffold healthy. Store LLM credentials in `memri-frontend/.env.local` using the template key from `tutorials/fake-memri/webapp/.env.local` (see `GPT_KEY`). Use the `screenpipe` repo as inspiration/reference for capture/OCR/API behavior.
 > Use Anthropic (Claude) as the primary LLM adapter (`ANTHROPIC_API_KEY`) for assistant/chat endpoints.

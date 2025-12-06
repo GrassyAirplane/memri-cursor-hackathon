@@ -156,6 +156,7 @@ fn build_router(state: AppState, api_key: Option<String>) -> Router {
     Router::new()
         .route("/health", get(|| async { StatusCode::OK }))
         .route("/captures", get(list_captures))
+        .route("/captures/images", get(get_capture_images))
         .route("/events", get(capture_events))
         .route("/chat", get(list_chat_messages).post(add_chat_message))
         .route("/assistant", get(list_chat_messages).post(run_assistant))
@@ -192,10 +193,39 @@ async fn list_captures(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Vec<CaptureWithWindows>>, StatusCode> {
-    let limit = params.limit.unwrap_or(20).min(200) as i64;
+    // No limit by default - return all captures metadata (no images for performance).
+    let limit = params.limit.map(|l| l as i64).unwrap_or(i64::MAX);
     state
         .storage
-        .fetch_recent_captures(limit)
+        .fetch_captures_metadata(limit)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Deserialize)]
+struct ImageParams {
+    ids: String, // Comma-separated capture IDs
+}
+
+/// Fetch images for specific capture IDs (on-demand loading).
+async fn get_capture_images(
+    State(state): State<AppState>,
+    Query(params): Query<ImageParams>,
+) -> Result<Json<std::collections::HashMap<i64, String>>, StatusCode> {
+    let ids: Vec<i64> = params
+        .ids
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    
+    if ids.is_empty() {
+        return Ok(Json(std::collections::HashMap::new()));
+    }
+    
+    state
+        .storage
+        .fetch_images_for_captures(&ids)
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -323,6 +353,151 @@ async fn run_assistant(
     Ok(Json(chat_msg))
 }
 
+/// Parse time-related keywords from user query and return (start_time_ms, end_time_ms)
+fn parse_time_range(query: &str) -> (Option<i64>, Option<i64>) {
+    let query_lower = query.to_lowercase();
+    let now_ms = time_ms();
+    let day_ms: i64 = 86_400_000;
+    let hour_ms: i64 = 3_600_000;
+    
+    if query_lower.contains("yesterday") {
+        // Yesterday: start of yesterday to end of yesterday
+        let start = now_ms - (2 * day_ms);
+        let end = now_ms - day_ms;
+        return (Some(start), Some(end));
+    }
+    
+    if query_lower.contains("today") {
+        // Today: start of today (midnight) to now
+        let start = now_ms - day_ms;
+        return (Some(start), None);
+    }
+    
+    if query_lower.contains("last hour") || query_lower.contains("past hour") {
+        let start = now_ms - hour_ms;
+        return (Some(start), None);
+    }
+    
+    if query_lower.contains("this morning") {
+        // Assume morning is 6am-12pm today
+        let start = now_ms - day_ms;
+        return (Some(start), None);
+    }
+    
+    if query_lower.contains("last week") || query_lower.contains("past week") {
+        let start = now_ms - (7 * day_ms);
+        return (Some(start), None);
+    }
+    
+    // No specific time range detected
+    (None, None)
+}
+
+/// Extract search terms from user query (apps, keywords, etc.)
+fn extract_search_terms(query: &str) -> String {
+    let query_lower = query.to_lowercase();
+    
+    let mut terms = Vec::new();
+    
+    // Stop words to exclude from search
+    let stop_words = [
+        "what", "did", "i", "do", "on", "the", "was", "were", "last", "yesterday", 
+        "today", "show", "me", "find", "search", "look", "for", "my", "a", "an", "in",
+        "have", "has", "been", "any", "some", "which", "where", "when", "how", "why",
+        "can", "could", "would", "should", "will", "that", "this", "these", "those",
+        "with", "from", "about", "into", "through", "during", "before", "after",
+        "above", "below", "between", "under", "again", "further", "then", "once",
+        "here", "there", "all", "each", "few", "more", "most", "other", "such",
+        "only", "own", "same", "than", "too", "very", "just", "also", "now",
+        "work", "done", "watched", "looked", "used", "opened", "saw", "see",
+        "videos", "video", "page", "pages", "site", "sites", "app", "apps",
+    ];
+    
+    // Extract quoted strings as exact search terms (highest priority)
+    let mut in_quote = false;
+    let mut current_term = String::new();
+    for ch in query.chars() {
+        if ch == '"' || ch == '\'' {
+            if in_quote && !current_term.is_empty() {
+                terms.push(current_term.clone());
+                current_term.clear();
+            }
+            in_quote = !in_quote;
+        } else if in_quote {
+            current_term.push(ch);
+        }
+    }
+    
+    // Extract ALL meaningful words from query (not just if apps not found)
+    for word in query_lower.split_whitespace() {
+        let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric());
+        if cleaned.len() > 2 && !stop_words.contains(&cleaned) && !terms.contains(&cleaned.to_string()) {
+            terms.push(cleaned.to_string());
+        }
+    }
+    
+    // If still no terms, be very permissive - just grab anything 3+ chars
+    if terms.is_empty() {
+        for word in query_lower.split_whitespace() {
+            let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric());
+            if cleaned.len() >= 3 {
+                terms.push(cleaned.to_string());
+                break; // Just get one term to search with
+            }
+        }
+    }
+    
+    terms.join(" ")
+}
+
+/// Build an enhanced prompt with capture context for the LLM
+fn build_context_prompt(original_query: &str, captures: &[memri_storage::CaptureWithWindows]) -> String {
+    use chrono::{TimeZone, Utc};
+    
+    let mut context_parts = Vec::new();
+    
+    for cap in captures {
+        let dt = Utc.timestamp_millis_opt(cap.timestamp_ms).unwrap();
+        let timestamp = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+        
+        for window in &cap.windows {
+            let app = &window.app_name;
+            let title = &window.window_name;
+            let text_preview = if window.text.len() > 200 {
+                format!("{}...", &window.text[..200])
+            } else {
+                window.text.clone()
+            };
+            
+            context_parts.push(format!(
+                "[[CLIP:{}]] At {}, App: {}, Window: \"{}\"\nContent: {}",
+                cap.capture_id, timestamp, app, title, text_preview
+            ));
+        }
+    }
+    
+    if context_parts.is_empty() {
+        return original_query.to_string();
+    }
+    
+    format!(
+        r#"You are a helpful assistant with access to the user's screen captures. Here are relevant captures I found:
+
+{}
+
+IMPORTANT: When you mention ANY information from the captures above, you MUST include the exact clip marker [[CLIP:ID]] (replacing ID with the number) inline in your response. This creates a clickable link for the user.
+
+Example response format:
+"Based on your captures, you were watching a YouTube video [[CLIP:123]] about programming, and then you searched for Rust tutorials [[CLIP:124]]."
+
+Now answer the user's question, making sure to include [[CLIP:ID]] markers for each capture you reference:
+
+{}"#,
+        context_parts.join("\n\n"),
+        original_query
+    )
+}
+
 async fn stream_assistant(
     State(state): State<AppState>,
     Json(input): Json<AssistantInput>,
@@ -343,25 +518,99 @@ async fn stream_assistant(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     history.reverse();
 
+    // Search captures for relevant context based on user query
+    let (start_time, end_time) = parse_time_range(&input.prompt);
+    let search_terms = extract_search_terms(&input.prompt);
+    
+    let relevant_captures = if !search_terms.is_empty() {
+        state
+            .storage
+            .search_captures(&search_terms, start_time, end_time, 5)
+            .await
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    // Build enhanced prompt with capture context
+    let enhanced_prompt = if relevant_captures.is_empty() {
+        input.prompt.clone()
+    } else {
+        build_context_prompt(&input.prompt, &relevant_captures)
+    };
+
+    // Store user message in DB before streaming
+    state
+        .storage
+        .insert_chat_message("user", &input.prompt)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let resp = client
         .request_stream(
             &history,
-            &input.prompt,
+            &enhanced_prompt,
             input.model.clone(),
             input.max_tokens,
         )
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
 
-    let stream = resp.bytes_stream().filter_map(|item| async move {
-        match item {
-            Ok(bytes) => {
-                let chunk = String::from_utf8_lossy(&bytes).to_string();
-                Some(Ok(Event::default().data(chunk)))
+    // Clone storage for use in stream
+    let storage = state.storage.clone();
+    let accumulated_text = Arc::new(tokio::sync::Mutex::new(String::new()));
+    let accumulated_clone = accumulated_text.clone();
+
+    let stream = resp.bytes_stream().filter_map(move |item| {
+        let text_ref = accumulated_clone.clone();
+        async move {
+            match item {
+                Ok(bytes) => {
+                    let chunk = String::from_utf8_lossy(&bytes).to_string();
+                    
+                    // Parse SSE format: extract text from content_block_delta events
+                    let mut extracted_text = String::new();
+                    for line in chunk.lines() {
+                        if line.starts_with("data: ") {
+                            let json_str = &line[6..]; // Skip "data: " prefix
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                // Look for content_block_delta with text
+                                if json["type"] == "content_block_delta" {
+                                    if let Some(text) = json["delta"]["text"].as_str() {
+                                        extracted_text.push_str(text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if !extracted_text.is_empty() {
+                        // Accumulate for saving later
+                        let mut text = text_ref.lock().await;
+                        text.push_str(&extracted_text);
+                        Some(Ok(Event::default().data(extracted_text)))
+                    } else {
+                        None
+                    }
+                }
+                Err(err) => {
+                    error!("anthropic stream error: {err}");
+                    None
+                }
             }
-            Err(err) => {
-                error!("anthropic stream error: {err}");
-                None
+        }
+    });
+
+    // Spawn task to save assistant response after stream completes
+    // Use a longer delay to ensure the stream has finished
+    tokio::spawn(async move {
+        // Wait longer for stream to complete (complex responses can take time)
+        tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+        let final_text = accumulated_text.lock().await;
+        if !final_text.is_empty() {
+            info!("Saving assistant message ({} chars)", final_text.len());
+            if let Err(e) = storage.insert_chat_message("assistant", &final_text).await {
+                error!("Failed to save assistant message: {e}");
             }
         }
     });
@@ -429,7 +678,7 @@ impl AnthropicClient {
         max_tokens: Option<u32>,
     ) -> Result<String> {
         let model = model.unwrap_or_else(|| "claude-3-5-sonnet-latest".to_string());
-        let max_tokens = max_tokens.unwrap_or(256);
+        let max_tokens = max_tokens.unwrap_or(2048);
 
         let mut messages: Vec<AnthropicMessage> = history
             .iter()
@@ -492,7 +741,7 @@ impl AnthropicClient {
         max_tokens: Option<u32>,
     ) -> Result<reqwest::Response> {
         let model = model.unwrap_or_else(|| "claude-3-5-sonnet-latest".to_string());
-        let max_tokens = max_tokens.unwrap_or(256);
+        let max_tokens = max_tokens.unwrap_or(2048);
 
         let mut messages: Vec<AnthropicMessage> = history
             .iter()
