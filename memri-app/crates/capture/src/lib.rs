@@ -9,8 +9,11 @@ mod window_capture;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::io::Cursor;
 
 use anyhow::Result;
+use base64::{engine::general_purpose, Engine as _};
+use image::{DynamicImage, ImageFormat};
 use memri_config::AppConfig;
 use memri_ocr::OcrEngine;
 use memri_storage::{CaptureBatch, CaptureSink, CapturedWindowRecord};
@@ -25,6 +28,8 @@ pub struct CaptureConfig {
     pub interval: Duration,
     pub capture_unfocused_windows: bool,
     pub languages: Vec<String>,
+    pub window_include: Vec<String>,
+    pub window_ignore: Vec<String>,
 }
 
 impl CaptureConfig {
@@ -34,6 +39,8 @@ impl CaptureConfig {
             interval: Duration::from_millis(app.capture_interval_ms),
             capture_unfocused_windows: app.capture_unfocused_windows,
             languages: app.languages.clone(),
+            window_include: app.window_include.clone(),
+            window_ignore: app.window_ignore.clone(),
         }
     }
 }
@@ -101,7 +108,15 @@ async fn perform_iteration(
     // 3. Dispatch OCR jobs and persist results.
     debug!(monitor = config.monitor_id, "performing capture iteration");
 
-    let raw_capture = match platform::capture_frame(config.monitor_id).await {
+    let window_filters = WindowFilters::new(&config.window_ignore, &config.window_include);
+
+    let raw_capture = match platform::capture_frame(
+        config.monitor_id,
+        config.capture_unfocused_windows,
+        &window_filters,
+    )
+    .await
+    {
         Ok(data) => data,
         Err(err) => {
             warn!(monitor = config.monitor_id, "platform capture failed: {err}");
@@ -116,22 +131,35 @@ async fn perform_iteration(
 
     debug!(engine = ocr_engine.name(), frame_number, "running OCR pipeline (stub)");
 
+    let windows = raw_capture
+        .windows
+        .iter()
+        .map(|window| CapturedWindowRecord {
+            window_name: window.window_name.clone(),
+            app_name: window.app_name.clone(),
+            text: String::new(),
+            confidence: None,
+            image_base64: encode_image_base64(&window.image).ok(),
+            browser_url: None,
+        })
+        .collect();
+
     let batch = CaptureBatch {
         frame_number,
         timestamp_ms,
-        windows: vec![CapturedWindowRecord {
-            window_name: "stub window".to_string(),
-            app_name: "memri-app".to_string(),
-            text: "OCR not yet implemented".to_string(),
-            confidence: None,
-            image_base64: None,
-            browser_url: None,
-        }],
+        windows,
     };
 
     sink.persist_batch(batch).await?;
 
-    let _ = raw_capture;
+    let _ = raw_capture.monitor_image;
 
     Ok(true)
+}
+
+fn encode_image_base64(image: &DynamicImage) -> Result<String, image::ImageError> {
+    let mut buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut buffer);
+    image.write_to(&mut cursor, ImageFormat::Png)?;
+    Ok(general_purpose::STANDARD.encode(buffer))
 }

@@ -10,3 +10,7 @@ memri_storage = { path = "../storage" }
 memri_config = { path = "../config" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tracing = "0.1"
+base64 = "0.22"
+image = { version = "0.24", features = ["png", "jpeg"] }
+once_cell = "1.19"
+xcap = "0.4.1"
