@@ -4,17 +4,18 @@
 //! dispatching work items downstream for OCR and storage.
 
 mod change_detection;
-mod monitor;
+pub mod monitor;
 mod platform;
 mod window_capture;
 
 use std::cmp;
+use std::fs;
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
 use change_detection::{ChangeDecision, ChangeDetector};
 use image::{DynamicImage, ImageFormat};
 use memri_config::AppConfig;
@@ -36,6 +37,7 @@ pub struct CaptureConfig {
     pub languages: Vec<String>,
     pub window_include: Vec<String>,
     pub window_ignore: Vec<String>,
+    pub image_dir: PathBuf,
 }
 
 impl CaptureConfig {
@@ -48,6 +50,7 @@ impl CaptureConfig {
             languages: app.languages.clone(),
             window_include: app.window_include.clone(),
             window_ignore: app.window_ignore.clone(),
+            image_dir: PathBuf::from(&app.image_dir),
         }
     }
 }
@@ -183,8 +186,15 @@ async fn perform_iteration(
         .unwrap_or_default();
 
     let ocr_start = Instant::now();
-    let windows =
-        process_windows_for_ocr(&raw_capture.windows, &config.languages, ocr_engine).await;
+    let windows = process_windows_for_ocr(
+        &raw_capture.windows,
+        &config.languages,
+        ocr_engine,
+        frame_number,
+        timestamp_ms,
+        &config.image_dir,
+    )
+    .await;
     let ocr_elapsed = ocr_start.elapsed();
 
     let batch = CaptureBatch {
@@ -222,9 +232,17 @@ async fn process_windows_for_ocr(
     windows: &[window_capture::CapturedWindow],
     languages: &[String],
     ocr_engine: Arc<dyn OcrEngine>,
+    frame_number: u64,
+    timestamp_ms: i64,
+    image_dir: &Path,
 ) -> Vec<CapturedWindowRecord> {
     let mut records = Vec::with_capacity(windows.len());
 
+    if let Err(err) = fs::create_dir_all(image_dir) {
+        warn!("failed to create image_dir {:?}: {err}", image_dir);
+    }
+
+    let mut idx: usize = 0;
     for window in windows {
         let ocr_context = OcrContext {
             window_name: window.window_name.clone(),
@@ -233,28 +251,29 @@ async fn process_windows_for_ocr(
             languages: languages.to_vec(),
         };
 
-        let (png_bytes, image_base64) = match encode_image_png(&window.image).map(|bytes| {
-            let b64 = general_purpose::STANDARD.encode(&bytes);
-            (bytes, b64)
-        }) {
-            Ok(val) => val,
-            Err(err) => {
-                warn!(
-                    window = window.window_name,
-                    "failed to encode window image: {err}"
-                );
-                records.push(CapturedWindowRecord {
-                    window_name: window.window_name.clone(),
-                    app_name: window.app_name.clone(),
-                    text: String::new(),
-                    confidence: None,
-                    browser_url: None,
-                    image_base64: None,
-                    ocr_json: None,
-                });
-                continue;
-            }
-        };
+        let (png_bytes, image_path) =
+            match save_image_to_disk(&window.image, image_dir, frame_number, timestamp_ms, idx) {
+                Ok(val) => val,
+                Err(err) => {
+                    warn!(
+                        window = window.window_name,
+                        "failed to write window image: {err}"
+                    );
+                    records.push(CapturedWindowRecord {
+                        window_name: window.window_name.clone(),
+                        app_name: window.app_name.clone(),
+                        text: String::new(),
+                        confidence: None,
+                        browser_url: None,
+                        image_base64: None,
+                        ocr_json: None,
+                        image_path: None,
+                    });
+                    idx = idx.saturating_add(1);
+                    continue;
+                }
+            };
+        idx = idx.saturating_add(1);
 
         let ocr_result = ocr_engine
             .recognize(&png_bytes, &ocr_context)
@@ -284,8 +303,9 @@ async fn process_windows_for_ocr(
                 &window.app_name,
                 &window.window_name,
             ),
-            image_base64: Some(image_base64),
+            image_base64: None,
             ocr_json,
+            image_path: Some(image_path),
         });
     }
 
@@ -366,4 +386,19 @@ fn extract_browser_url(is_focused: bool, app_name: &str, window_title: &str) -> 
     } else {
         Some(url)
     }
+}
+
+fn save_image_to_disk(
+    image: &DynamicImage,
+    base_dir: &Path,
+    frame_number: u64,
+    timestamp_ms: i64,
+    idx: usize,
+) -> Result<(Vec<u8>, String), image::ImageError> {
+    let png_bytes = encode_image_png(image)?;
+    let filename = format!("frame_{}_{}_{}.png", timestamp_ms, frame_number, idx);
+    let path = base_dir.join(filename);
+    fs::write(&path, &png_bytes).map_err(image::ImageError::IoError)?;
+    let path_str = path.to_string_lossy().to_string();
+    Ok((png_bytes, path_str))
 }

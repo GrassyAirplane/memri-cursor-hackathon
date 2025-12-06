@@ -4,11 +4,16 @@
 //! typed config structs consumed by other crates.
 
 use std::env;
+use std::fs;
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
-pub const DEFAULT_DATABASE_URL: &str = "sqlite://memri.db";
+mod file_loader;
+
+pub const DEFAULT_DATABASE_URL: &str = "sqlite://./memri.db";
 pub const DEFAULT_LANGUAGES: &str = "en";
+pub const DEFAULT_IMAGE_DIR: &str = "captures";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -26,11 +31,16 @@ pub struct AppConfig {
     pub retention_days: u64,
     /// Maximum number of capture rows to keep (0 disables).
     pub max_captures: u64,
+    /// Directory to store captured window images (written as PNG).
+    pub image_dir: String,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
-        dotenvy::dotenv().ok();
+        // 1) Load structured config file (memri-config.toml) into env (only missing keys).
+        file_loader::load_file_config_into_env().ok();
+        // 2) Load simple note file (env.note or memri.env.note) as a last resort.
+        load_note_env();
 
         let monitor_id = read_env_u32("MEMRI_MONITOR_ID", 0)?;
         let monitor_ids = read_env_list_u32("MEMRI_MONITOR_IDS");
@@ -46,6 +56,8 @@ impl AppConfig {
         let window_ignore = read_env_list("MEMRI_WINDOW_IGNORE", "");
         let retention_days = read_env_u64("MEMRI_RETENTION_DAYS", 30)?;
         let max_captures = read_env_u64("MEMRI_MAX_CAPTURES", 5_000)?;
+        let image_dir =
+            env::var("MEMRI_IMAGE_DIR").unwrap_or_else(|_| DEFAULT_IMAGE_DIR.to_string());
 
         Ok(Self {
             monitor_id,
@@ -59,7 +71,38 @@ impl AppConfig {
             window_ignore,
             retention_days,
             max_captures,
+            image_dir,
         })
+    }
+}
+
+/// Lightweight "note" file loader for environments where `.env` isn't desired.
+/// Supports simple KEY=VALUE lines; lines starting with `#` are ignored.
+/// Only sets variables that are not already present in the environment.
+fn load_note_env() {
+    const CANDIDATES: &[&str] = &["env.note", "memri.env.note", "config.note"];
+
+    for name in CANDIDATES {
+        let path = Path::new(name);
+        if !path.exists() {
+            continue;
+        }
+
+        if let Ok(contents) = fs::read_to_string(path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = trimmed.split_once('=') {
+                    if env::var(key).is_err() {
+                        env::set_var(key.trim(), value.trim());
+                    }
+                }
+            }
+            // Stop after the first found file.
+            break;
+        }
     }
 }
 

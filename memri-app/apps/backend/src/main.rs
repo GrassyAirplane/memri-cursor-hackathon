@@ -14,7 +14,7 @@ use axum::{
     Json, Router,
 };
 use futures_util::{Stream, StreamExt};
-use memri_capture::{start_capture, CaptureConfig};
+use memri_capture::{monitor::list_monitors, start_capture, CaptureConfig};
 use memri_config::AppConfig;
 use memri_ocr::{OcrEngine, WindowsOcr};
 use memri_storage::{CaptureWithWindows, ChatMessage, SqliteSink};
@@ -35,11 +35,39 @@ async fn main() -> Result<()> {
     let app_config = AppConfig::from_env()?;
     info!(?app_config, "loaded configuration");
 
-    let monitors = if app_config.monitor_ids.is_empty() {
+    // Discover available monitors up front and reconcile config.
+    let available = list_monitors().await.unwrap_or_default();
+    if available.is_empty() {
+        error!("no monitors detected on this system; capture cannot start");
+        return Ok(());
+    }
+
+    // Build the desired monitor list: use explicit monitor_ids if provided, otherwise the single monitor_id.
+    let mut requested = if app_config.monitor_ids.is_empty() {
         vec![app_config.monitor_id]
     } else {
         app_config.monitor_ids.clone()
     };
+
+    // Filter to available monitors; fallback to first available if none match.
+    let available_ids: Vec<u32> = available.iter().map(|m| m.id()).collect();
+    requested.retain(|id| available_ids.contains(id));
+    if requested.is_empty() {
+        let fallback = available_ids[0];
+        error!(
+            "configured monitor(s) not found: {:?}; falling back to primary monitor {}",
+            if app_config.monitor_ids.is_empty() {
+                vec![app_config.monitor_id]
+            } else {
+                app_config.monitor_ids.clone()
+            },
+            fallback
+        );
+        requested.push(fallback);
+    }
+
+    info!("available monitors: {:?}", available_ids);
+    info!("using monitors: {:?}", requested);
     let (events_tx, _events_rx) = broadcast::channel::<String>(64);
     let storage = Arc::new(SqliteSink::from_app_config(&app_config).await?);
     let ocr_engine: Arc<dyn OcrEngine> = Arc::new(WindowsOcr);
@@ -52,7 +80,7 @@ async fn main() -> Result<()> {
     });
 
     let mut capture_handles = Vec::new();
-    for monitor_id in monitors {
+    for monitor_id in requested {
         let cfg = CaptureConfig::from_app_config(&app_config, monitor_id);
         let handle = start_capture(cfg, ocr_engine.clone(), notifying_sink.clone()).await?;
         capture_handles.push(handle);

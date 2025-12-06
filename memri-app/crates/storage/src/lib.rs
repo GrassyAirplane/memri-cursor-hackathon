@@ -31,6 +31,7 @@ pub struct CapturedWindowRecord {
     pub confidence: Option<f32>,
     pub ocr_json: Option<String>,
     pub image_base64: Option<String>,
+    pub image_path: Option<String>,
     pub browser_url: Option<String>,
 }
 
@@ -120,6 +121,7 @@ impl SqliteSink {
                 confidence REAL,
                 ocr_json TEXT,
                 image_base64 TEXT,
+                image_path TEXT,
                 browser_url TEXT
             );
             "#,
@@ -129,6 +131,9 @@ impl SqliteSink {
 
         // Best-effort migration for older databases without `ocr_json`.
         let _ = sqlx::query("ALTER TABLE captured_windows ADD COLUMN ocr_json TEXT")
+            .execute(&self.pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE captured_windows ADD COLUMN image_path TEXT")
             .execute(&self.pool)
             .await;
 
@@ -195,8 +200,8 @@ impl CaptureSink for SqliteSink {
         for window in batch.windows.iter() {
             sqlx::query(
                 r#"INSERT INTO captured_windows (
-                    capture_id, window_name, app_name, text, confidence, ocr_json, image_base64, browser_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+                    capture_id, window_name, app_name, text, confidence, ocr_json, image_base64, image_path, browser_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             )
             .bind(capture_id)
             .bind(window.window_name.clone())
@@ -205,6 +210,7 @@ impl CaptureSink for SqliteSink {
             .bind(window.confidence)
             .bind(window.ocr_json.clone())
             .bind(window.image_base64.clone())
+            .bind(window.image_path.clone())
             .bind(window.browser_url.clone())
             .execute(&mut *conn)
             .await?;
@@ -285,6 +291,7 @@ impl SqliteSink {
                     confidence: row.confidence,
                     ocr_json: row.ocr_json,
                     image_base64: row.image_base64,
+                    image_path: None,
                     browser_url: row.browser_url,
                 });
             }

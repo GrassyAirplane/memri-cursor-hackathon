@@ -91,13 +91,25 @@ impl SafeMonitor {
 
 #[allow(dead_code)]
 pub async fn get_monitor_by_id(id: u32) -> Result<SafeMonitor> {
-    task::spawn_blocking(move || {
-        Monitor::all()
-            .map_err(anyhow::Error::from)?
-            .into_iter()
+    task::spawn_blocking(move || -> Result<SafeMonitor> {
+        let mut monitors: Vec<Monitor> = Monitor::all().map_err(anyhow::Error::from)?.into_iter().collect();
+
+        // Try the requested id first.
+        if let Some(found) = monitors
+            .iter()
             .find(|m| m.id().unwrap_or_default() == id)
-            .ok_or_else(|| anyhow!("monitor {id} not found"))
-            .and_then(SafeMonitor::new)
+            .cloned()
+        {
+            return SafeMonitor::new(found);
+        }
+
+        // Fallback: use the first available monitor (often the primary).
+        if let Some(fallback) = monitors.pop() {
+            warn!("monitor {id} not found, falling back to primary monitor");
+            return SafeMonitor::new(fallback);
+        }
+
+        Err(anyhow!("no monitors detected"))
     })
     .await?
 }

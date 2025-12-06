@@ -1,33 +1,209 @@
 @import "tailwindcss";
 
+/* Eden.so Design System - Color Palette & CSS Variables */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Primary Colors - Eden.so cyan/turquoise accent */
+  --color-primary: #00D4B8;
+  --color-primary-light: #00E5CC;
+  --color-primary-hover: #00B8A3;
+  --color-secondary: #9B8AFF;
+  --color-secondary-light: #8B7CFF;
+  
+  /* Background Colors */
+  --color-bg: #FFFFFF;
+  --color-bg-elevated: #FAFAFA;
+  --color-hover: #F8F8F8;
+  --color-active: #E6FFFE;
+  --color-active-secondary: #F0EFFF;
+  
+  /* Text Hierarchy */
+  --color-text: #000000;
+  --color-text-secondary: #707070;
+  --color-text-tertiary: #999999;
+  --color-text-quaternary: #CCCCCC;
+  
+  /* Border Colors */
+  --color-border: #E5E5E5;
+  --color-border-medium: #EEEEEE;
+  
+  /* UI Surface Colors */
+  --color-card-bg: #FFFFFF;
+  
+  /* Status colors */
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+  
+  /* Spacing Scale */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0.0, 0.2, 1);
+  --transition-standard: 250ms cubic-bezier(0.4, 0.0, 0.2, 1);
+  
+  /* Message-specific */
+  --message-bubble-user-bg: linear-gradient(135deg, #E6FFFE 0%, #F0EFFF 100%);
+  --message-bubble-ai-bg: #F8F8F8;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* Dark mode adjustments */
+    --color-bg: #0A0A0A;
+    --color-bg-elevated: #121212;
+    --color-hover: #1A1A1A;
+    --color-active: #1A3A37;
+    
+    --color-text: #FFFFFF;
+    --color-text-secondary: #A3A3A3;
+    --color-text-tertiary: #737373;
+    
+    --color-border: #262626;
+    --color-border-medium: #404040;
+    
+    --color-card-bg: #121212;
+    --message-bubble-ai-bg: #1A1A1A;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Roboto", 
+    "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0em;
+}
+
+/* Eden.so Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #CCCCCC;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #999999;
+}
+
+/* Eden.so Focus Styles - Cyan Accent */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: calc(var(--radius-sm) + 2px);
+}
+
+button:focus-visible {
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 0;
+  box-shadow: 0 0 0 3px rgba(0, 213, 184, 0.1);
+}
+
+/* Typography utilities */
+.text-mono {
+  font-family: Monaco, Consolas, "Courier New", monospace;
+}
+
+/* Eden.so Animation utilities */
+.transition-fast {
+  transition: all var(--transition-fast);
+}
+
+.transition-standard {
+  transition: all var(--transition-standard);
+}
+
+/* Message entry animation */
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-enter {
+  animation: messageSlideIn 300ms cubic-bezier(0.0, 0.0, 0.2, 1);
+}
+
+/* Typing indicator animation */
+@keyframes typingBounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-6px);
+  }
+}
+
+.typing-dot {
+  animation: typingBounce 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Button press effect */
+.button-press:active {
+  transform: scale(0.97);
+}
+
+/* Prevent text selection during drag */
+.dragging {
+  user-select: none;
+  cursor: col-resize !important;
+}
+
+.dragging * {
+  cursor: col-resize !important;
+}
+
+/* Smooth scroll behavior */
+.smooth-scroll {
+  scroll-behavior: smooth;
 }

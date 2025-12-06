@@ -65,6 +65,7 @@ Define these in `memri-app/.env`:
 - [x] Implement migration tooling (e.g., `sqlx::migrate!` or Diesel migrations).
 - [x] Write persistence layer for capture batches and chat history.
 - [x] Add pruning/compaction strategy for local storage size control.
+- [x] Store capture images to disk and reference paths in SQLite.
 
 ### 6. API & Realtime Interfaces
 
@@ -80,26 +81,26 @@ Define these in `memri-app/.env`:
 
 ### 8. Frontend Foundations (`memri-frontend`)
 
-- [ ] Align design tokens/variables with existing Memri Next.js web styles (fonts, spacing, colors).
-- [ ] Set up global layout, navigation shell, and responsive breakpoints.
+- [x] Align design tokens/variables with existing Memri Next.js web styles (fonts, spacing, colors).
+- [x] Set up global layout, navigation shell, and responsive breakpoints.
 - [ ] Create shared UI primitives (cards, buttons, tabs) for consistent visual language.
 
 ### 9. Chat Experience UI
 
-- [ ] Build conversation view with message bubbles, timestamps, and assistant avatars.
-- [ ] Add input composer with attachments/context toggles.
-- [ ] Integrate live streaming for assistant replies and OCR snippets.
+- [x] Build conversation view with message bubbles, timestamps, and assistant avatars.
+- [x] Add input composer with attachments/context toggles.
+- [x] Integrate live streaming for assistant replies and OCR snippets.
 
 ### 10. Vision Timeline & Detail Views
 
-- [ ] Implement timeline/grid of captured frames with change indicators.
-- [ ] Add detail drawer showing screenshot, OCR text, metadata, and detected browser URL.
-- [ ] Support filtering by app/window, search within OCR text, and jump-to-chat context.
+- [x] Implement timeline/grid of captured frames with change indicators.
+- [x] Add detail drawer showing screenshot, OCR text, metadata, and detected browser URL.
+- [x] Support filtering by app/window, search within OCR text, and jump-to-chat context.
 
 ### 11. Realtime Sync & State Management
 
-- [ ] Wire WebSocket/SSE client to hydrate chat and capture stores.
-- [ ] Implement optimistic updates and fallback polling.
+- [x] Wire WebSocket/SSE client to hydrate chat and capture stores.
+- [x] Implement optimistic updates and fallback polling.
 - [ ] Handle offline/slow-connection states gracefully.
 
 ### 12. Quality, Observability & Tooling

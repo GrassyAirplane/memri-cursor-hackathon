@@ -1,0 +1,19 @@
+[app]
+monitor_id = 0
+monitor_ids = []
+capture_interval_ms = 2000
+capture_max_interval_ms = 8000
+capture_unfocused_windows = false
+languages = ["en"]
+database_url = "sqlite://./memri.db"
+window_include = []
+window_ignore = []
+retention_days = 30
+max_captures = 5000
+image_dir = "captures"
+
+[api]
+addr = "127.0.0.1:8080"
+key = ""
+anthropic_api_key = ""
+
