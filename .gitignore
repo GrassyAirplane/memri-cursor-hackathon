@@ -1,0 +1,59 @@
+# OS / file system noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / tool settings
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment and local config
+.env
+.env.*
+
+# Logs and temporary files
+*.log
+*.pid
+*.tmp
+*.swp
+*.swo
+*.orig
+
+# Node / Next.js
+node_modules/
+*.tsbuildinfo
+.pnp
+.pnp.*
+.next/
+out/
+dist/
+build/
+.vercel/
+coverage/
+
+# Rust / Cargo build outputs
+target/
+**/target/
+**/*.rs.bk
+
+# Compiled artifacts and debugging symbols
+*.exe
+*.dll
+*.pdb
+*.so
+*.dylib
+*.rlib
+*.rmeta
+*.d
+*.o
+*.a
+
+# Databases and local app data
+*.db
+*.sqlite
+*.sqlite3
+memri.db
+memri-app/captures/
+
+
