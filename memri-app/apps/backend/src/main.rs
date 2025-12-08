@@ -3,7 +3,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use std::{fs, io};
+use std::fs;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -19,7 +19,7 @@ use futures_util::{Stream, StreamExt};
 use memri_capture::{monitor::list_monitors, start_capture, CaptureConfig};
 use memri_config::AppConfig;
 use memri_ocr::{OcrEngine, WindowsOcr};
-use memri_storage::{CaptureWithWindows, ChatMessage, SqliteSink};
+use memri_storage::{CaptureSink, CaptureWithWindows, ChatMessage, SqliteSink};
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::signal;
