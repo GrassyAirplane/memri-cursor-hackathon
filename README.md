@@ -8,10 +8,6 @@ Memri watches your screen (with permission), detects meaningful changes, runs on
 - Realtime: SSE/WebSockets keep chat and timeline in sync.
 
 ## Preview
-
-![Capture + OCR workflow](readme-images/workflow.png)
-
-### Timeline & change detection
 ![Timeline](readme-images/most%20used.png)
 
 ### Chat with context from captures
@@ -22,6 +18,9 @@ Memri watches your screen (with permission), detects meaningful changes, runs on
 
 ### Local status & logs
 ![Terminal Status](readme-images/terminal.png)
+
+### Creating Workflows for AI Agents
+![Capture + OCR workflow](readme-images/workflow.png)
 
 ## Features
 
