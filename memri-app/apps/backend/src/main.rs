@@ -1,7 +1,9 @@
 use std::convert::Infallible;
 use std::env;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
+use std::{fs, io};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -44,6 +46,12 @@ async fn main() -> Result<()> {
     let ocr_engine: Arc<dyn OcrEngine> = Arc::new(WindowsOcr);
     let anthropic = AnthropicClient::from_env();
     let api_key = env::var("MEMRI_API_KEY").ok();
+
+    // Optional seeding from a static captures folder for headless environments.
+    let seed_dir = env::var("MEMRI_SEED_CAPTURE_DIR").unwrap_or_else(|_| "captures-seed".into());
+    if let Err(err) = seed_captures_from_dir(storage.clone(), &seed_dir).await {
+        error!(%seed_dir, ?err, "failed to seed captures from directory");
+    }
 
     let notifying_sink: Arc<dyn memri_storage::CaptureSink> = Arc::new(NotifyingSink {
         inner: storage.clone(),
@@ -809,6 +817,75 @@ struct AnthropicResponse {
 #[derive(Deserialize)]
 struct AnthropicContent {
     text: Option<String>,
+}
+
+/// Seed the database from a static captures directory if the DB is empty.
+async fn seed_captures_from_dir(storage: Arc<SqliteSink>, dir: &str) -> Result<()> {
+    let path = Path::new(dir);
+    if !path.exists() || !path.is_dir() {
+        return Ok(()); // nothing to do
+    }
+
+    // Skip seeding if captures already exist.
+    let existing = storage.fetch_captures_metadata(1).await?;
+    if !existing.is_empty() {
+        info!("database already has captures; skipping seed");
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .collect();
+    entries.sort_by_key(|e| e.path());
+
+    let mut count = 0u64;
+    for (idx, entry) in entries.into_iter().enumerate() {
+        let p = entry.path();
+        let ext = p
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+        if !["png", "jpg", "jpeg", "webp", "bmp"].contains(&ext.as_str()) {
+            continue;
+        }
+
+        let ts_ms = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or_else(|_| time_ms())
+            })
+            .unwrap_or_else(|_| time_ms());
+
+        let batch = memri_storage::CaptureBatch {
+            frame_number: idx as u64,
+            timestamp_ms: ts_ms,
+            windows: vec![memri_storage::CapturedWindowRecord {
+                window_name: p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                app_name: "static".to_string(),
+                text: String::new(),
+                confidence: None,
+                ocr_json: None,
+                image_base64: None,
+                image_path: Some(p.to_string_lossy().to_string()),
+                browser_url: None,
+            }],
+        };
+
+        storage.persist_batch(batch).await?;
+        count += 1;
+    }
+
+    info!(seeded = count, dir, "seeded captures from static folder");
+    Ok(())
 }
 
 fn time_ms() -> i64 {
