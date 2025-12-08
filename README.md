@@ -1,120 +1,76 @@
-# Memri Cursor Hackathon Plan
+# Memri: Continuous Vision + Chat for the Desktop
 
-inside the `memri-app` backend while delivering a polished chat and vision UI in the `memri-frontend` Next.js application. Each task includes a checkbox to track completion. The initial implementation targets Windows devices, leveraging Windows-native OCR and window focus APIs.
+Memri watches your screen (with permission), detects meaningful changes, runs on-device OCR, and streams that context into a chat-first UX.
 
-> Working note: after each code change, attempt to compile or run relevant tests (e.g., `cargo check`, `cargo test`, `npm test`) to keep the scaffold healthy. Store LLM credentials in `memri-frontend/.env.local` using the template key from `tutorials/fake-memri/webapp/.env.local` (see `GPT_KEY`). Use the `screenpipe` repo as inspiration/reference for capture/OCR/API behavior.
-> Use Anthropic (Claude) as the primary LLM adapter (`ANTHROPIC_API_KEY`) for assistant/chat endpoints.
+- Backend (`memri-app`, Rust): screen capture, change detection, OCR, SQLite storage, APIs.
+- Frontend (`memri-frontend`, Next.js): live timeline of captures, OCR text viewer, and chat UI wired to the backend.
+- Local-first: data stays on your machine; SQLite + images on disk.
+- Realtime: SSE/WebSockets keep chat and timeline in sync.
 
-### Environment Variables (backend)
+## Preview
 
-Define these in `memri-app/.env`:
+![Capture + OCR workflow](readme-images/workflow.png)
 
-- `MEMRI_MONITOR_ID` (u32) — target monitor id
-- `MEMRI_CAPTURE_INTERVAL_MS` / `MEMRI_CAPTURE_MAX_INTERVAL_MS` — base/maximum capture interval with backoff
-- `MEMRI_CAPTURE_UNFOCUSED` — capture non-focused windows (bool)
-- `MEMRI_LANGUAGES` — comma-separated OCR languages (e.g., `en`)
-- `MEMRI_DATABASE_URL` — sqlite connection string (e.g., `sqlite://memri.db`)
-- `MEMRI_WINDOW_INCLUDE` / `MEMRI_WINDOW_IGNORE` — filters for app/window titles
-- `MEMRI_API_ADDR` — bind address for HTTP API (default `127.0.0.1:8080`)
-- `MEMRI_API_KEY` — optional API key; if set, clients must send `x-api-key`
-- `ANTHROPIC_API_KEY` — required for `/assistant` Claude calls
+### Timeline & change detection
+![Timeline](readme-images/most%20used.png)
 
-## High-Level Goals
+### Chat with context from captures
+![Chat + Vision](readme-images/green%20shirt.png)
 
-- Reproduce Screenpipe's continuous capture + OCR pipeline within `memri-app`, using Screenpipe's Rust code as reference.
-- Persist captures, OCR outputs, and chat context to SQLite for portability and easy local dev.
-- Expose realtime and query APIs that the Next.js frontend can consume.
-- Deliver a minimal, elegant UI aligned with existing Memri web styling that showcases chats, screenshots, and OCR insights.
+### Search OCR text
+![Search](readme-images/youtube%20search.png)
 
-## Architecture Alignment
+### Local status & logs
+![Terminal Status](readme-images/terminal.png)
 
-- **Backend** (`memri-app`): Rust services for capture, OCR, event processing, storage, APIs.
-- **Database**: SQLite (single file, migrations, indices for queries by time/window).
-- **Frontend** (`memri-frontend`): Next.js app for chat UX, screenshot gallery, OCR text viewer, leveraging Memri design language.
-- **Realtime Transport**: WebSocket or Server-Sent Events for live updates from backend to frontend.
+## Features
 
-## Implementation Checklist
+- **Smart capture loop**: configurable interval and change-detection to avoid noisy frames.
+- **OCR everywhere**: Windows-native OCR; text stored alongside images.
+- **Contextual chat**: assistant can reference recent captures and OCR snippets.
+- **Searchable timeline**: filter by window/app, search OCR text, open detail drawers with metadata.
+- **Local persistence**: SQLite DB plus image folder on disk; retention controls.
+- **APIs for builders**: REST + realtime stream for captures, OCR, and chat events.
 
-### 1. Discovery & Environment
+## Run Locally
 
-- [ ] Audit Screenpipe components relevant to capture, OCR, storage, APIs.
-- [ ] Document OS-level dependencies (Windows capture libs, OCR engines) for Memri targets.
-- [ ] Confirm build tooling (Rust toolchain, Node version, package managers) across repo.
+### Prerequisites
+- Windows 10/11
+- Rust toolchain (stable)
+- Node.js 18+ and npm
 
-### 2. Backend Project Preparation (`memri-app`)
+### Backend (`memri-app`)
+```bash
+cd memri-app
+cargo run
+```
 
-- [x] Define crate/module layout mirroring Screenpipe responsibilities (capture, OCR, storage, api, config).
-- [x] Set up feature flags or cfg-guards for OS-specific capture paths.
-- [x] Establish shared configuration (environment variables, `.env`, CLI flags).
+Configuration lives in `memri-app/memri-config.toml`. You can override values with environment variables if you prefer:
+- `MEMRI_MONITOR_ID` (default 0)
+- `MEMRI_CAPTURE_INTERVAL_MS` / `MEMRI_CAPTURE_MAX_INTERVAL_MS`
+- `MEMRI_CAPTURE_UNFOCUSED` (true/false)
+- `MEMRI_LANGUAGES` (e.g., `en`)
+- `MEMRI_DATABASE_URL` (e.g., `sqlite://./memri.db`)
+- `MEMRI_API_ADDR` (default `127.0.0.1:8080`)
+- `MEMRI_API_KEY` (optional)
+- `ANTHROPIC_API_KEY` (required for assistant; can be set at runtime)
 
-### 3. Capture & Change Detection
+Images are written to `memri-app/captures/`; SQLite lives at `memri.db`.
 
-- [x] Port/implement monitor and window capture logic with multi-monitor and filter support.
-- [x] Implement frame-diff logic (histogram + SSIM) to detect meaningful screen changes.
-- [x] Introduce throttling/backoff to balance fidelity vs resource usage.
+### Frontend (`memri-frontend`)
+```bash
+cd memri-frontend
+npm install
+npm run dev
+```
 
-### 4. OCR Pipeline
+Create `memri-frontend/.env.local`:
+```
+NEXT_PUBLIC_API_BASE=http://127.0.0.1:8080
+```
+(Add `ANTHROPIC_API_KEY` here if the frontend calls the backend with a key.)
 
-- [x] Integrate OCR engines (microsoft ocr) behind a unified trait.
-- [x] Handle per-window OCR execution with confidence metrics and structured JSON output.
-- [x] Add browser URL enrichment using focused-window heuristics.
-
-### 5. Data Storage (SQLite)
-
-- [x] Design schema (captures, windows, texts, chat messages, metadata, indices).
-- [x] Implement migration tooling (e.g., `sqlx::migrate!` or Diesel migrations).
-- [x] Write persistence layer for capture batches and chat history.
-- [x] Add pruning/compaction strategy for local storage size control.
-- [x] Store capture images to disk and reference paths in SQLite.
-
-### 6. API & Realtime Interfaces
-
-- [x] Design REST/GraphQL endpoints for historical queries (captures, OCR text, conversations).
-- [x] Implement WebSocket/SSE channel for live capture and chat updates.
-- [x] Secure endpoints (auth placeholders, rate limiting, CORS policy for Next.js).
-
-### 7. Chat & Assistant Integration
-
-- [x] Define conversation model linking OCR context with assistant prompts/responses.
-- [x] Implement backend chat orchestration (LLM adapters, context retrieval from SQLite).
-- [x] Provide streaming responses to frontend with incremental tokens.
-
-### 8. Frontend Foundations (`memri-frontend`)
-
-- [x] Align design tokens/variables with existing Memri Next.js web styles (fonts, spacing, colors).
-- [x] Set up global layout, navigation shell, and responsive breakpoints.
-- [ ] Create shared UI primitives (cards, buttons, tabs) for consistent visual language.
-
-### 9. Chat Experience UI
-
-- [x] Build conversation view with message bubbles, timestamps, and assistant avatars.
-- [x] Add input composer with attachments/context toggles.
-- [x] Integrate live streaming for assistant replies and OCR snippets.
-
-### 10. Vision Timeline & Detail Views
-
-- [x] Implement timeline/grid of captured frames with change indicators.
-- [x] Add detail drawer showing screenshot, OCR text, metadata, and detected browser URL.
-- [x] Support filtering by app/window, search within OCR text, and jump-to-chat context.
-
-### 11. Realtime Sync & State Management
-
-- [x] Wire WebSocket/SSE client to hydrate chat and capture stores.
-- [x] Implement optimistic updates and fallback polling.
-- [ ] Handle offline/slow-connection states gracefully.
-
-### 12. Quality, Observability & Tooling
-
-- [x] Add logging/tracing across backend pipeline (capture latencies, OCR duration, send failures).
-- [ ] Implement unit/integration tests for critical flows (capture diffing, OCR parsing, API contracts).
-- [ ] Provide developer scripts for local startup (backend, frontend, database seeding).
-
-### 13. Hackathon Polish
-
-- [ ] Seed demo data for presentations (sample captures, curated chats).
-- [ ] Prepare walkthrough script highlighting unique value props.
-- [ ] Ensure README/docs explain setup in <5 minutes.
-
----
-
-Update this checklist as tasks progress. Future prompts can dive into each section to implement the corresponding functionality.
+### Typical Flow
+1. Start backend: `cargo run` (captures + API + SSE).
+2. Start frontend: `npm run dev` and open http://localhost:3000.
+3. Grant screen permissions; watch the timeline and chat fill with context.
