@@ -5,7 +5,7 @@ Memri watches your screen (with permission), detects meaningful changes, runs on
 - Backend (`memri-app`, Rust): screen capture, change detection, OCR, SQLite storage, APIs.
 - Frontend (`memri-frontend`, Next.js): live timeline of captures, OCR text viewer, and chat UI wired to the backend.
 - Local-first: data stays on your machine; SQLite + images on disk.
-- Realtime: SSE/WebSockets keep chat and timeline in sync.
+- Realtime: SSE keep chat and timeline in sync.
 
 ## Preview
 ![Timeline](readme-images/most%20used.png)
