@@ -35,39 +35,10 @@ async fn main() -> Result<()> {
     let app_config = AppConfig::from_env()?;
     info!(?app_config, "loaded configuration");
 
-    // Discover available monitors up front and reconcile config.
-    let available = list_monitors().await.unwrap_or_default();
-    if available.is_empty() {
-        error!("no monitors detected on this system; capture cannot start");
-        return Ok(());
-    }
+    let capture_disabled = env::var("MEMRI_DISABLE_CAPTURE")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
 
-    // Build the desired monitor list: use explicit monitor_ids if provided, otherwise the single monitor_id.
-    let mut requested = if app_config.monitor_ids.is_empty() {
-        vec![app_config.monitor_id]
-    } else {
-        app_config.monitor_ids.clone()
-    };
-
-    // Filter to available monitors; fallback to first available if none match.
-    let available_ids: Vec<u32> = available.iter().map(|m| m.id()).collect();
-    requested.retain(|id| available_ids.contains(id));
-    if requested.is_empty() {
-        let fallback = available_ids[0];
-        error!(
-            "configured monitor(s) not found: {:?}; falling back to primary monitor {}",
-            if app_config.monitor_ids.is_empty() {
-                vec![app_config.monitor_id]
-            } else {
-                app_config.monitor_ids.clone()
-            },
-            fallback
-        );
-        requested.push(fallback);
-    }
-
-    info!("available monitors: {:?}", available_ids);
-    info!("using monitors: {:?}", requested);
     let (events_tx, _events_rx) = broadcast::channel::<String>(64);
     let storage = Arc::new(SqliteSink::from_app_config(&app_config).await?);
     let ocr_engine: Arc<dyn OcrEngine> = Arc::new(WindowsOcr);
@@ -80,10 +51,49 @@ async fn main() -> Result<()> {
     });
 
     let mut capture_handles = Vec::new();
-    for monitor_id in requested {
-        let cfg = CaptureConfig::from_app_config(&app_config, monitor_id);
-        let handle = start_capture(cfg, ocr_engine.clone(), notifying_sink.clone()).await?;
-        capture_handles.push(handle);
+
+    if capture_disabled {
+        info!("MEMRI_DISABLE_CAPTURE is set; skipping screen capture and OCR");
+    } else {
+        // Discover available monitors up front and reconcile config.
+        let available = list_monitors().await.unwrap_or_default();
+        if available.is_empty() {
+            error!("no monitors detected on this system; capture cannot start");
+            return Ok(());
+        }
+
+        // Build the desired monitor list: use explicit monitor_ids if provided, otherwise the single monitor_id.
+        let mut requested = if app_config.monitor_ids.is_empty() {
+            vec![app_config.monitor_id]
+        } else {
+            app_config.monitor_ids.clone()
+        };
+
+        // Filter to available monitors; fallback to first available if none match.
+        let available_ids: Vec<u32> = available.iter().map(|m| m.id()).collect();
+        requested.retain(|id| available_ids.contains(id));
+        if requested.is_empty() {
+            let fallback = available_ids[0];
+            error!(
+                "configured monitor(s) not found: {:?}; falling back to primary monitor {}",
+                if app_config.monitor_ids.is_empty() {
+                    vec![app_config.monitor_id]
+                } else {
+                    app_config.monitor_ids.clone()
+                },
+                fallback
+            );
+            requested.push(fallback);
+        }
+
+        info!("available monitors: {:?}", available_ids);
+        info!("using monitors: {:?}", requested);
+
+        for monitor_id in requested {
+            let cfg = CaptureConfig::from_app_config(&app_config, monitor_id);
+            let handle = start_capture(cfg, ocr_engine.clone(), notifying_sink.clone()).await?;
+            capture_handles.push(handle);
+        }
     }
 
     let api_task = start_api_server(
